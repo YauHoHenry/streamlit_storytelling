@@ -1,0 +1,22 @@
+{
+  "title": "The Last Lighthouse Keeper",
+  "author": "A. I. Tales",
+  "cover_image": "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=80",
+  "chapters": [
+    {
+      "title": "Chapter 1 — The Storm Arrives",
+      "text": "On the edge of a jagged cliff where the sea met the sky, stood a lighthouse that had guided sailors for over a century. Its keeper, Old Marlowe, had tended the flame every night without fail — until the night the great storm came.\n\nThe wind howled like a wounded beast, and waves crashed against the rocks below with tremendous force. Marlowe lit the lamp as always, but something felt different tonight. A ship appeared on the horizon, heading straight for the reef.",
+      "image": "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=800&q=80"
+    },
+    {
+      "title": "Chapter 2 — A Signal in the Dark",
+      "text": "Marlowe grabbed his signal lantern and rushed to the gallery. Through sheets of rain, he could barely make out the ship's lights. He swung his lantern in the warning pattern his father had taught him — three slow sweeps, then two quick flashes.\n\nFor a breathless moment, nothing happened. Then, miraculously, the ship began to turn. The crew had seen him. The bow swung wide, the hull groaning against the swell, and the vessel passed the reef with barely a breath to spare.",
+      "image": "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=800&q=80"
+    },
+    {
+      "title": "Chapter 3 — Dawn and Gratitude",
+      "text": "By morning the storm had passed, leaving the world washed clean and sparkling. A small boat rowed ashore from the ship and a young captain climbed the lighthouse stairs. She clasped Marlowe's weathered hands in hers and said simply, 'You saved us all.'\n\nMarlowe looked out at the calm sea and smiled. He had tended this light for forty years, and for forty years the sea had tested him. Today, the sea had lost. He turned back to the lamp to trim the wick — there would be another night, and another ship that needed him.",
+      "image": "https://images.unsplash.com/photo-1470770841072-f978cf4d019e?w=800&q=80"
+    }
+  ]
+}
