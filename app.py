@@ -4,6 +4,7 @@ Dark Fairy Theme — linear immersive reading experience.
 """
 
 import base64
+import html
 import io
 import json
 import pathlib
@@ -35,6 +36,13 @@ st.markdown(
 
     /* ── App background: deep obsidian ── */
     .stApp { background-color: #08080c; }
+
+    /* Keep all content within a laptop-friendly canvas */
+    .block-container {
+        max-width: 1180px;
+        padding-top: 1.2rem;
+        padding-bottom: 1.2rem;
+    }
 
     /* ── Story title: tarnished gold Cinzel ── */
     h1.story-title {
@@ -86,16 +94,24 @@ st.markdown(
     /* ── Story body text: ghostly pale EB Garamond on obsidian-crimson ── */
     .story-text {
         font-family: 'EB Garamond', Georgia, serif;
-        font-size: 1.15rem;
+        font-size: clamp(1rem, 1.05vw, 1.15rem);
         line-height: 2.0;
         color: #f0ebe0;
         text-align: justify;
         background-color: #0f0a14;
-        padding: 1.5rem 2rem;
+        padding: clamp(1rem, 1.8vw, 1.5rem) clamp(1rem, 2.2vw, 2rem);
         border-left: 3px solid #8b0000;
         border-right: 3px solid #8b0000;
         border-radius: 4px;
         box-shadow: inset 0 0 20px #00000044, 0 4px 16px rgba(139, 0, 0, 0.2);
+        max-height: 68vh;
+        overflow-y: auto;
+    }
+    .story-text p {
+        margin: 0 0 1em 0;
+    }
+    .story-text p:last-child {
+        margin-bottom: 0;
     }
 
     /* ── Author byline: ghostly silver italic ── */
@@ -351,6 +367,8 @@ st.markdown(
     img {
         border-radius: 4px;
         box-shadow: 0 4px 20px rgba(139, 0, 0, 0.35), 0 0 12px rgba(139, 0, 0, 0.15);
+        max-width: 100%;
+        height: auto;
     }
 
     /* ── Radio buttons ── */
@@ -379,10 +397,37 @@ st.markdown(
     }
 
     .cover-image-container img {
-        max-height: 300px;
+        max-height: min(42vh, 320px);
         width: auto;
         border-radius: 6px;
         box-shadow: 0 8px 32px rgba(139, 0, 0, 0.35), 0 0 20px rgba(200, 210, 255, 0.08);
+    }
+
+    /* Streamlit image wrappers: prevent over-expansion on laptop viewport */
+    [data-testid="stImage"] img {
+        max-height: 62vh;
+        object-fit: contain;
+    }
+
+    /* Slightly denser spacing for smaller laptop heights */
+    @media (max-height: 860px) {
+        h1.story-title {
+            font-size: 2.5rem;
+            margin-top: 1rem;
+        }
+        h2.chapter-heading {
+            font-size: 1.45rem;
+            margin-top: 1.2rem;
+            margin-bottom: 0.7rem;
+        }
+        .cover-splash {
+            padding: 2.2rem 1.2rem;
+            margin: 1rem 0;
+        }
+        .ending-screen {
+            padding: 2.8rem 1.2rem;
+            margin: 1rem 0;
+        }
     }
 
     /* ── Image toggle container ── */
@@ -476,55 +521,184 @@ def fetch_image(source) -> Image.Image | None:
         return source
     try:
         if isinstance(source, str):
-            url = source.strip()
-            if not url or not _is_safe_url(url):
+            path_or_url = source.strip()
+            if not path_or_url:
                 return None
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            return Image.open(io.BytesIO(resp.content))
+            parsed = urlparse(path_or_url)
+            if parsed.scheme.lower() in _ALLOWED_SCHEMES:
+                if not _is_safe_url(path_or_url):
+                    return None
+                resp = requests.get(path_or_url, timeout=10)
+                resp.raise_for_status()
+                return Image.open(io.BytesIO(resp.content))
+            local_path = pathlib.Path(path_or_url).expanduser()
+            if not local_path.is_absolute():
+                local_path = pathlib.Path(__file__).parent / local_path
+            if local_path.exists() and local_path.is_file():
+                return Image.open(local_path)
+            return None
+        if hasattr(source, "seek"):
+            source.seek(0)
         return Image.open(source)
     except (requests.RequestException, OSError, SyntaxError):
         return None
 
 
-def display_chapter_card(chapter: dict, chapter_idx: int, total_chapters: int, image_override=None, gif_override=None) -> None:
-    """Render a single chapter as a focused dark fairy reading card."""
+def fetch_gif_bytes(source) -> bytes | None:
+    """Load GIF bytes from a URL, local path, uploaded file, bytes, or None."""
+    if source is None:
+        return None
+    if isinstance(source, (bytes, bytearray)):
+        return bytes(source)
+    try:
+        if isinstance(source, str):
+            path_or_url = source.strip()
+            if not path_or_url:
+                return None
+            parsed = urlparse(path_or_url)
+            if parsed.scheme.lower() in _ALLOWED_SCHEMES:
+                if not _is_safe_url(path_or_url):
+                    return None
+                resp = requests.get(path_or_url, timeout=10)
+                resp.raise_for_status()
+                return resp.content
+            local_path = pathlib.Path(path_or_url).expanduser()
+            if not local_path.is_absolute():
+                local_path = pathlib.Path(__file__).parent / local_path
+            if local_path.exists() and local_path.is_file():
+                with open(local_path, "rb") as f:
+                    return f.read()
+            return None
+        if hasattr(source, "seek"):
+            source.seek(0)
+        if hasattr(source, "read"):
+            return source.read()
+    except (requests.RequestException, OSError, SyntaxError):
+        return None
+    return None
+
+
+def render_gif(gif_bytes: bytes, use_container_width: bool = True) -> None:
+    """Render GIF bytes as an HTML image so animation always plays."""
+    width_style = (
+        "width:100%;max-height:62vh;height:auto;object-fit:contain;"
+        if use_container_width
+        else "max-width:100%;max-height:62vh;height:auto;object-fit:contain;"
+    )
+    encoded = base64.b64encode(gif_bytes).decode("ascii")
+    st.markdown(
+        f'<img src="data:image/gif;base64,{encoded}" style="{width_style} border-radius: 4px;" alt="Animated GIF">',
+        unsafe_allow_html=True,
+    )
+
+
+def render_gif_fullscreen(gif_bytes: bytes) -> None:
+    """Render GIF in a full-width cinematic layout."""
+    encoded = base64.b64encode(gif_bytes).decode("ascii")
+    st.markdown(
+        f"""
+        <div style="margin: 0 -1rem 1rem -1rem;">
+            <img
+                src="data:image/gif;base64,{encoded}"
+                alt="Animated GIF"
+                style="display:block;width:100vw;max-width:100vw;height:auto;object-fit:contain;"
+            >
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def show_image_compat(image, use_container_width: bool = False, width: int | None = None) -> None:
+    """Display image with compatibility across Streamlit versions."""
+    if width is not None:
+        st.image(image, width=width)
+        return
+    if use_container_width:
+        try:
+            st.image(image, use_container_width=True)
+        except TypeError:
+            st.image(image, use_column_width=True)
+        return
+    st.image(image)
+
+
+def render_story_text(text: str) -> None:
+    """Render story text while preserving empty lines and style."""
+    safe_text = html.escape(text or "")
+    paragraphs = [p for p in safe_text.split("\n\n") if p.strip()]
+    if paragraphs:
+        content = "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
+    else:
+        content = "<p></p>"
+    st.markdown(
+        f'<div class="story-text">{content}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def build_media_pages(chapter: dict, chapter_idx: int) -> list[dict]:
+    """Build media flow: first png -> first gif -> second png -> second gif."""
+    pages: list[dict] = []
+
+    image_1_src = st.session_state.chapter_images.get(chapter_idx)
+    image_1 = fetch_image(image_1_src if image_1_src is not None else chapter.get("image", ""))
+    gif_1 = st.session_state.chapter_gifs.get(chapter_idx)
+    if gif_1 is None:
+        gif_1 = fetch_gif_bytes(chapter.get("gif", ""))
+
+    image_2_src = st.session_state.chapter_images_2.get(chapter_idx)
+    image_2 = fetch_image(image_2_src if image_2_src is not None else chapter.get("image_2", ""))
+    gif_2 = st.session_state.chapter_gifs_2.get(chapter_idx)
+    if gif_2 is None:
+        gif_2 = fetch_gif_bytes(chapter.get("gif_2", ""))
+
+    if image_1 is not None:
+        pages.append({"kind": "image", "content": image_1})
+    if gif_1 is not None:
+        pages.append({"kind": "gif", "content": gif_1})
+    if image_2 is not None:
+        pages.append({"kind": "image", "content": image_2})
+    if gif_2 is not None:
+        pages.append({"kind": "gif", "content": gif_2})
+
+    return pages
+
+
+def display_chapter_card(chapter: dict, chapter_idx: int, total_chapters: int, page=0, media_pages=None) -> None:
+    """Render a single chapter with ordered media pages."""
     st.markdown(
         f'<h2 class="chapter-heading">{chapter["title"]}</h2>',
         unsafe_allow_html=True,
     )
+    pages = media_pages or []
+    page_count = len(pages)
 
-    # Progress indicator
-    st.markdown(
-        f"<p class='chapter-indicator'>Chapter {chapter_idx + 1} of {total_chapters}</p>",
-        unsafe_allow_html=True,
-    )
-
-    img_source = image_override if image_override is not None else chapter.get("image", "")
-    img = fetch_image(img_source)
-    gif_img = fetch_image(gif_override) if gif_override else None
-
-    # Check if both static image and GIF are available for toggle
-    has_both = img is not None and gif_img is not None
-    show_gif = st.session_state.show_gif.get(chapter_idx, False)
-
-    if img:
-        col_text, col_img = st.columns([3, 2])
-        with col_text:
-            st.markdown(
-                f'<p class="story-text">{chapter["text"]}</p>',
-                unsafe_allow_html=True,
-            )
-        with col_img:
-            if has_both:
-                render_image_toggle(img, gif_img, chapter_idx, show_gif)
-            else:
-                st.image(img, use_container_width=True)
-    else:
+    if page_count > 0:
+        safe_page = max(0, min(page, page_count - 1))
         st.markdown(
-            f'<p class="story-text">{chapter["text"]}</p>',
+            f"<p class='chapter-indicator'>Chapter {chapter_idx + 1} of {total_chapters} &bull; Page {safe_page + 1} of {page_count}</p>",
             unsafe_allow_html=True,
         )
+        current_page = pages[safe_page]
+        if current_page["kind"] == "gif":
+            col_text, col_img = st.columns([3, 2])
+            with col_text:
+                render_story_text(chapter["text"])
+            with col_img:
+                render_gif(current_page["content"], use_container_width=True)
+        else:
+            col_text, col_img = st.columns([3, 2])
+            with col_text:
+                render_story_text(chapter["text"])
+            with col_img:
+                show_image_compat(current_page["content"], use_container_width=True)
+    else:
+        st.markdown(
+            f"<p class='chapter-indicator'>Chapter {chapter_idx + 1} of {total_chapters}</p>",
+            unsafe_allow_html=True,
+        )
+        render_story_text(chapter["text"])
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -537,7 +711,7 @@ def render_cover_splash(title: str, author: str, cover_image: str) -> None:
 
     if cover_img:
         st.markdown("<div class='cover-image-container'>", unsafe_allow_html=True)
-        st.image(cover_img, use_container_width=True)
+        show_image_compat(cover_img, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown(f"<h1>{title}</h1>", unsafe_allow_html=True)
@@ -552,7 +726,10 @@ def render_cover_splash(title: str, author: str, cover_image: str) -> None:
 
 def render_ending_screen() -> None:
     """Render the styled 'The End' screen."""
+    ending_img = fetch_image("src/ending.png")
     st.markdown("<div class='ending-screen'>", unsafe_allow_html=True)
+    if ending_img:
+        show_image_compat(ending_img, use_container_width=True)
     st.markdown("<h1>The Echo Fades</h1>", unsafe_allow_html=True)
 
     if st.button("Read Again", key="read_again_btn"):
@@ -560,41 +737,6 @@ def render_ending_screen() -> None:
         st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
-
-
-def render_image_toggle(static_image, gif_image, chapter_idx, show_gif):
-    """Render an image with a toggle button to switch between static image and animated GIF."""
-    # Encode images to base64
-    static_b64 = ""
-    gif_b64 = ""
-
-    if static_image:
-        static_bytes = io.BytesIO()
-        static_image.save(static_bytes, format=static_image.format or "PNG")
-        static_b64 = base64.b64encode(static_bytes.getvalue()).decode()
-
-    if gif_image:
-        gif_bytes = io.BytesIO()
-        gif_image.save(gif_bytes, format="GIF")
-        gif_b64 = base64.b64encode(gif_bytes.getvalue()).decode()
-
-    icon = "🎬" if show_gif else "🖼️"
-    current_b64 = gif_b64 if show_gif else static_b64
-    current_type = "gif" if show_gif else "png"
-
-    if not current_b64:
-        return
-
-    # Toggle URL - appends/removes a query param that Streamlit will read
-    toggle_url = f"?toggle_gif_{chapter_idx}=1" if not show_gif else f"?toggle_gif_{chapter_idx}=0"
-
-    toggle_script = f"""
-    <div class="image-toggle-container">
-        <img src="data:image/{current_type};base64,{current_b64}" style="width:100%;border-radius:4px;box-shadow:0 4px 20px rgba(139,0,0,0.35),0 0 12px rgba(139,0,0,0.15);" />
-        <button class="image-toggle-btn" onclick="window.location.href='{toggle_url}'" title="Toggle image/GIF">{icon}</button>
-    </div>
-    """
-    st.html(toggle_script)
 
 
 def render_particle_background():
@@ -665,7 +807,7 @@ def render_particle_background():
     })();
     </script>
     """
-    st.html(particle_script)
+    st.markdown(particle_script, unsafe_allow_html=True)
 
 # Floating particle background (call after function definition)
 render_particle_background()
@@ -677,33 +819,40 @@ if "story" not in st.session_state:
     st.session_state.story = load_sample_story()
 if "current_chapter" not in st.session_state:
     st.session_state.current_chapter = -1  # -1 = cover splash, 0+ = chapters
-if "view_mode" not in st.session_state:
-    st.session_state.view_mode = "Read"  # "Read" | "Edit"
 if "chapter_images" not in st.session_state:
     st.session_state.chapter_images = {}
 if "chapter_gifs" not in st.session_state:
     st.session_state.chapter_gifs = {}
-if "show_gif" not in st.session_state:
-    st.session_state.show_gif = {}
+if "chapter_images_2" not in st.session_state:
+    st.session_state.chapter_images_2 = {}
+if "chapter_gifs_2" not in st.session_state:
+    st.session_state.chapter_gifs_2 = {}
+if "chapter_page" not in st.session_state:
+    st.session_state.chapter_page = {}
 
 story: dict = st.session_state.story
 chapters: list = story.get("chapters", [])
 
-# Handle toggle query params for GIF switching
+# Handle next_page query params for multi-page chapters
 try:
-    query_params = st.experimental_get_query_params()
+    query_params = st.query_params
     for key, values in query_params.items():
-        if key.startswith("toggle_gif_"):
+        if key.startswith("next_page_"):
             try:
-                ch_idx = int(key.replace("toggle_gif_", ""))
+                ch_idx = int(key.replace("next_page_", ""))
                 if values and values[0] == "1":
-                    st.session_state.show_gif[ch_idx] = True
-                elif values and values[0] == "0":
-                    st.session_state.show_gif[ch_idx] = False
+                    st.session_state.chapter_page[ch_idx] = 1
+            except (ValueError, IndexError):
+                pass
+        elif key.startswith("prev_page_"):
+            try:
+                ch_idx = int(key.replace("prev_page_", ""))
+                if values and values[0] == "1":
+                    st.session_state.chapter_page[ch_idx] = 0
             except (ValueError, IndexError):
                 pass
     # Clear query params after processing
-    st.experimental_set_query_params()
+    st.query_params.clear()
 except Exception:
     pass
 
@@ -711,201 +860,102 @@ except Exception:
 # Sidebar — navigation & editing controls
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown("## 🪞 The Unsleeping Echo")
-    st.markdown("---")
+    st.markdown("## The Unsleeping Echo")
 
-    view_mode = st.radio(
-        "Mode",
-        options=["Read Story", "Edit Story"],
-        index=0 if st.session_state.view_mode == "Read" else 1,
-    )
-    st.session_state.view_mode = "Read" if view_mode == "Read Story" else "Edit"
-
-    st.markdown("---")
-
-    if st.button("🔄 Load sample story"):
-        st.session_state.story = load_sample_story()
+    st.markdown("### Chapter Shortcuts")
+    if st.button("Cover", key="go_cover"):
         st.session_state.current_chapter = -1
-        st.session_state.chapter_images = {}
-        st.session_state.chapter_gifs = {}
-        st.session_state.show_gif = {}
         st.rerun()
 
-    # Upload a custom story JSON file
-    uploaded_story = st.file_uploader(
-        "📂 Upload story JSON", type=["json"], key="story_upload"
-    )
-    if uploaded_story is not None:
-        try:
-            loaded = json.load(uploaded_story)
-            st.session_state.story = loaded
-            st.session_state.current_chapter = -1
-            st.session_state.chapter_images = {}
-            st.session_state.chapter_gifs = {}
-            st.session_state.show_gif = {}
+    for i, chapter in enumerate(chapters):
+        chapter_title = chapter.get("title", f"Chapter {i + 1}")
+        if st.button(f"{i + 1}. {chapter_title}", key=f"go_chapter_{i}"):
+            st.session_state.current_chapter = i
+            st.session_state.chapter_page[i] = 0
             st.rerun()
-        except json.JSONDecodeError:
-            st.error("Invalid JSON file.")
+
+    if st.button("Ending", key="go_ending"):
+        st.session_state.current_chapter = len(chapters)
+        st.rerun()
 
     st.markdown("---")
-    st.markdown("*A mirror never lies...*")
+    current_idx = st.session_state.current_chapter
+    if current_idx == -1:
+        st.markdown("*Now reading: Cover*")
+    elif 0 <= current_idx < len(chapters):
+        st.markdown(f"*Now reading: Chapter {current_idx + 1}*")
+    else:
+        st.markdown("*Now reading: Ending*")
 
 # ---------------------------------------------------------------------------
 # Main area — READ mode
 # ---------------------------------------------------------------------------
-if st.session_state.view_mode == "Read":
-    if not chapters:
-        st.info("No chapters yet. Switch to **Edit Story** mode to add content.")
+if not chapters:
+    st.info("No chapters available in the story.")
+else:
+    idx = st.session_state.current_chapter
+
+    # Cover splash (-1 state)
+    if idx == -1:
+        render_cover_splash(
+            title=story.get("title", "Untitled Story"),
+            author=story.get("author", "Unknown"),
+            cover_image=story.get("cover_image", ""),
+        )
+
+    # Ending screen (past last chapter)
+    elif idx >= len(chapters):
+        render_ending_screen()
+
+    # Chapter display (0 to N-1)
     else:
-        idx = st.session_state.current_chapter
-
-        # Cover splash (-1 state)
-        if idx == -1:
-            render_cover_splash(
-                title=story.get("title", "Untitled Story"),
-                author=story.get("author", "Unknown"),
-                cover_image=story.get("cover_image", ""),
-            )
-
-        # Ending screen (past last chapter)
-        elif idx >= len(chapters):
-            render_ending_screen()
-
-        # Chapter display (0 to N-1)
+        chapter = chapters[idx]
+        media_pages = build_media_pages(chapter, idx)
+        page_count = len(media_pages)
+        current_page = st.session_state.chapter_page.get(idx, 0)
+        if page_count > 0:
+            current_page = max(0, min(current_page, page_count - 1))
         else:
-            chapter = chapters[idx]
-            image_override = st.session_state.chapter_images.get(idx)
-            gif_override = st.session_state.chapter_gifs.get(idx)
-            display_chapter_card(chapter, idx, len(chapters), image_override=image_override, gif_override=gif_override)
+            current_page = 0
+        st.session_state.chapter_page[idx] = current_page
 
-            # Navigation buttons
-            col_prev, col_spacer, col_next = st.columns([1, 2, 1])
+        display_chapter_card(
+            chapter,
+            idx,
+            len(chapters),
+            page=current_page,
+            media_pages=media_pages,
+        )
 
-            with col_prev:
-                if idx > 0 and st.button("← Return"):
+        # Navigation buttons
+        col_prev, col_spacer, col_next = st.columns([1, 2, 1])
+
+        with col_prev:
+            if page_count > 0 and current_page > 0:
+                if st.button("← Previous"):
+                    st.session_state.chapter_page[idx] = current_page - 1
+                    st.rerun()
+            elif idx > 0:
+                if st.button("← Return"):
                     st.session_state.current_chapter -= 1
                     st.rerun()
+            elif idx == 0 and current_page == 0:
+                if st.button("← Back to Cover"):
+                    st.session_state.current_chapter = -1
+                    st.rerun()
 
-            with col_next:
-                if idx < len(chapters) - 1:
-                    if st.button("Continue →"):
-                        st.session_state.current_chapter += 1
-                        st.rerun()
-                else:
-                    # Last chapter — go to ending
-                    if st.button("The Echo Fades 🍎"):
-                        st.session_state.current_chapter = len(chapters)
-                        st.rerun()
-
-# ---------------------------------------------------------------------------
-# Main area — EDIT mode
-# ---------------------------------------------------------------------------
-else:
-    st.markdown("## ✏️ Edit Your Story")
-
-    # Preview button
-    if st.button("👁 Preview Story (Dark Mode)"):
-        st.session_state.view_mode = "Read"
-        st.session_state.current_chapter = -1
-        st.rerun()
-
-    st.markdown("---")
-
-    with st.expander("Story details", expanded=True):
-        new_title = st.text_input("Story title", value=story.get("title", ""))
-        new_author = st.text_input("Author name", value=story.get("author", ""))
-        new_cover = st.text_input(
-            "Cover image URL (optional)", value=story.get("cover_image", "")
-        )
-        if new_title != story.get("title") or new_author != story.get("author") or new_cover != story.get("cover_image"):
-            story["title"] = new_title
-            story["author"] = new_author
-            story["cover_image"] = new_cover
-
-    st.markdown("### Chapters")
-
-    # Edit existing chapters
-    for i, ch in enumerate(chapters):
-        with st.expander(f"📄 {ch['title']}", expanded=(i == 0)):
-            ch["title"] = st.text_input(
-                "Chapter title", value=ch["title"], key=f"ch_title_{i}"
-            )
-            ch["text"] = st.text_area(
-                "Chapter text", value=ch["text"], height=200, key=f"ch_text_{i}"
-            )
-            ch["image"] = st.text_input(
-                "Image URL", value=ch.get("image", ""), key=f"ch_img_{i}"
-            )
-            uploaded = st.file_uploader(
-                "Or upload an image", type=["png", "jpg", "jpeg", "webp"],
-                key=f"ch_upload_{i}"
-            )
-            if uploaded is not None:
-                st.session_state.chapter_images[i] = uploaded
-                img = fetch_image(uploaded)
-                if img:
-                    st.image(img, width=300)
-            elif ch.get("image"):
-                img = fetch_image(ch["image"])
-                if img:
-                    st.image(img, width=300)
-
-            # GIF upload
-            uploaded_gif = st.file_uploader(
-                "Animated GIF (optional)", type=["gif"],
-                key=f"ch_gif_upload_{i}"
-            )
-            if uploaded_gif is not None:
-                st.session_state.chapter_gifs[i] = uploaded_gif
-                gif_img = fetch_image(uploaded_gif)
-                if gif_img:
-                    st.image(gif_img, width=300)
-            elif i in st.session_state.chapter_gifs:
-                gif_img = fetch_image(st.session_state.chapter_gifs[i])
-                if gif_img:
-                    st.image(gif_img, width=300)
-
-            if st.button(f"🗑 Delete chapter {i + 1}", key=f"del_{i}"):
-                chapters.pop(i)
-                st.session_state.chapter_images = {
-                    (k if k < i else k - 1): v
-                    for k, v in st.session_state.chapter_images.items()
-                    if k != i
-                }
-                st.session_state.chapter_gifs = {
-                    (k if k < i else k - 1): v
-                    for k, v in st.session_state.chapter_gifs.items()
-                    if k != i
-                }
-                st.session_state.show_gif = {
-                    k: v for k, v in st.session_state.show_gif.items()
-                    if k != i
-                }
-                st.session_state.current_chapter = -1
-                st.rerun()
-
-    # Add new chapter
-    st.markdown("---")
-    st.markdown("### ➕ Add a new chapter")
-    with st.form("new_chapter_form", clear_on_submit=True):
-        new_ch_title = st.text_input("Chapter title")
-        new_ch_text = st.text_area("Chapter text", height=150)
-        new_ch_img = st.text_input("Image URL (optional)")
-        submitted = st.form_submit_button("Add chapter")
-        if submitted and new_ch_title.strip():
-            chapters.append(
-                {"title": new_ch_title.strip(), "text": new_ch_text.strip(), "image": new_ch_img.strip()}
-            )
-            st.success(f"Chapter '{new_ch_title}' added!")
-            st.rerun()
-
-    # Export story as JSON
-    st.markdown("---")
-    st.markdown("### 💾 Export story")
-    story_json = json.dumps(story, indent=2, ensure_ascii=False)
-    st.download_button(
-        label="Download story as JSON",
-        data=story_json,
-        file_name="my_story.json",
-        mime="application/json",
-    )
+        with col_next:
+            if page_count > 0 and current_page < page_count - 1:
+                if st.button("Next Page →"):
+                    st.session_state.chapter_page[idx] = current_page + 1
+                    st.rerun()
+            elif idx < len(chapters) - 1:
+                if st.button("Continue →"):
+                    st.session_state.current_chapter += 1
+                    st.session_state.chapter_page[idx] = 0
+                    st.rerun()
+            else:
+                # Last chapter — go to ending
+                if st.button("The Echo Fades 🍎"):
+                    st.session_state.current_chapter = len(chapters)
+                    st.rerun()
